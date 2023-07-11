@@ -1,0 +1,73 @@
+---
+- name: Montior if container is down
+  hosts: localhost
+  tasks:
+    
+    - name: Get container info
+      docker_host_info:
+        containers: yes
+        containers_filters:
+          status: "exited"
+      register: status
+    - debug:
+        msg: "Exited container list : {{ item['Names'] }}"
+      loop: "{{ status.containers }}"
+
+      
+    - name: Sending an e-mail
+      mail:
+        host: email-smtp.us-east-1.amazonaws.com
+        port: 25
+        username: 
+        password: 
+        from: alertmanager@webhose.io
+        to: <nave_test-aaaakap2h5glazo232ft2whbnm@webz-io.slack.com>
+        subject: "{{ item['Names'][0] | replace('/','') }} is Exited on {{ ansible_hostname }}"
+        body: "Containter is exited"
+      when: item.Status.startswith('Exited')
+      loop: "{{ status.containers }}"
+
+-------------------------------------------------------------------------------------------------------------
+
+- name: Docker Swarm Replicas
+  hosts: localhost
+  tasks:
+
+    - name: Get service information
+      command: docker service ls --format "{{ '{{' }} .Name {{ '}} '  '{{' }} .Mode {{ '}} ' '{{' }} .Replicas {{ '}}' }}"
+      register: replicas
+
+    - name: manipulting
+      debug:
+        msg: "{{ item }}"
+      loop: "{{ replicas.stdout_lines }}"
+
+    - name: Get current state
+      shell: "echo '{{ item }}' | awk '{print$3}' | cut -d '/' -f1"
+      with_items: "{{ replicas.stdout_lines }}"
+      register: current_rep
+
+    - name: Get Desired state
+      shell: "echo '{{ item }}' | awk '{print$3}' | cut -d '/' -f2"
+      with_items: "{{ replicas.stdout_lines }}"
+      register: desired_rep
+
+    - name: Create limit var
+      set_fact:
+         limit: "{{ (desired_rep.results | map(attribute='stdout') | map('int') | list)[0]   * 8 // 10  }}"
+      loop: "{{ desired_rep.results }}"
+
+    - name: Sending an e-mail
+      mail:
+        host: email-smtp.us-east-1.amazonaws.com
+        port: 25
+        username:
+        password:
+        from: alertmanager@webhose.io
+        to: <nave_test-aaaakap2h5glazo232ft2whbnm@webz-io.slack.com>
+        subject: "Number of Replicas below 80% on {{ ansible_hostname }}"
+        body: |
+           "Number of Current Replicas: {{ item.0.stdout }}"
+           "Number of Desired Replicas: {{ item.1.stdout }}"
+      loop: "{{ current_rep.results|zip(desired_rep.results)|list }}"
+      when: item.0.stdout | int <= limit | int
